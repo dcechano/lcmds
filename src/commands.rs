@@ -1,8 +1,13 @@
-use std::fmt::{Display, Formatter};
+use crate::BLUE;
 use clap::Args;
 use console::style;
 use serde::{Deserialize, Serialize};
-#[derive(Serialize, Deserialize, Clone, Args, Debug)]
+use std::{
+    fmt::{self, Display, Formatter},
+    slice::Iter,
+};
+
+#[derive(Serialize, Deserialize, Clone, Args, Debug, Eq)]
 pub struct Command {
     /// command to be stored
     #[arg(short, long)]
@@ -18,18 +23,16 @@ impl PartialEq<Self> for Command {
     }
 }
 
-impl Eq for Command {}
-
 impl Display for Command {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(
             f,
             r#"
-            {0}: {2}
-            {1}: {3}
-            "#,
-            style("command").color256(33),
-            style("desc").color256(33),
+        {0}: {2}
+        {1}: {3}
+        "#,
+            style("command").color256(BLUE),
+            style("desc").color256(BLUE),
             self.cmd,
             self.desc
         )
@@ -38,29 +41,51 @@ impl Display for Command {
 
 #[derive(Deserialize, Serialize, Debug)]
 pub struct CommandList {
-    pub commands: Option<Vec<Command>>,
+    commands: Vec<Command>,
 }
 
-//
-// impl IntoIterator for CommandList {
-//     type Item = Command;
-//     type IntoIter = std::vec::IntoIter<Self::Item>;
-//
-//     fn into_iter(self) -> Self::IntoIter {
-//         if let Some(vec) = self.commands {
-//             IntoIterator::into_iter(vec)
-//         } else {
-//             Vec::new().into_iter()
-//         }
-//     }
-// }
-//
-// impl CommandList {
-//     pub fn iter(&self) -> impl Iterator + '_ {
-//         if let Some(ref vec) = self.commands {
-//             vec.iter()
-//         } else {
-//             self.commands.iter()
-//         }
-//     }
-// }
+impl CommandList {
+    pub fn new() -> Self {
+        Self {
+            commands: Vec::new(),
+        }
+    }
+
+    pub fn iter(&self) -> Iter<'_, Command> {
+        self.commands.iter()
+    }
+    pub fn push(&mut self, cmd: Command) {
+        self.commands.push(cmd);
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.commands.is_empty()
+    }
+
+    pub fn contains(&self, cmd: &Command) -> bool {
+        self.commands.contains(cmd)
+    }
+
+    pub fn remove(&mut self, cmd: &str) -> bool {
+        let Some(i) = self.iter().position(|srch| srch.cmd == cmd) else {
+            return false;
+        };
+
+        self.commands.remove(i);
+        true
+    }
+
+    pub fn find(&self, cmd: &str) -> Option<&Command> {
+        self.iter().find(|srch| srch.cmd == cmd)
+    }
+}
+
+impl IntoIterator for CommandList {
+    type Item = <Vec<Command> as IntoIterator>::Item;
+
+    type IntoIter = <Vec<Command> as IntoIterator>::IntoIter;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.commands.into_iter()
+    }
+}

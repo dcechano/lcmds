@@ -1,16 +1,21 @@
+use clap::{Parser, Subcommand};
+use std::fs::File;
+use std::process::exit;
+use std::{env, fs};
+
 mod commands;
 use crate::commands::{Command, CommandList};
-use clap::{Parser, Subcommand};
-use std::{env, fs};
-use std::fs::File;
-use std::process::{exit};
-use std::str::FromStr;
+
+pub const YELLOW: u8 = 11;
+pub const BLUE: u8 = 33;
+pub const GREEN: u8 = 34;
+pub const RED: u8 = 196;
 
 macro_rules! err {
     ($($arg:tt)*) => {{
         use console::style;
         let s = format!($($arg)*);
-        println!("\t{}", style(s).color256(196))
+        println!("\t{}", style(s).color256(RED))
     }};
 }
 
@@ -18,15 +23,16 @@ macro_rules! success {
     ($($arg:tt)*) => {{
         use console::style;
         let s = format!($($arg)*);
-        println!("\t{}", style(s).color256(34))
+        println!("\t{}", style(s).color256(GREEN))
     }};
 }
 
+#[allow(unused_macros)]
 macro_rules! warn {
     ($($arg:tt)*) => {{
         use console::style;
         let s = format!($($arg)*);
-        println!("\t{}", style(s).color256(11))
+        println!("\t{}", style(s).color256(YELLOW))
     }};
 }
 
@@ -46,8 +52,8 @@ enum Subcommands {
     /// Add a command to be referenced later:
     /// `add [-c | --cmd] [-d | --desc]`
     Add(Command),
-    // /// Try and retrieve a command by matching on part of description.
-    // GetDsc { cmd: String },
+    /// Try and retrieve a command by matching on part of description.
+    // Search { query: String },
     /// Removed a command. Cannot be retrieved later unless added again:
     /// `remove [-c | --cmd ]`
     Remove { cmd: String },
@@ -58,107 +64,79 @@ const FILE: &str = "commands.toml";
 fn main() {
     let args = Lcmds::parse();
     let commands = args.commands.unwrap_or_else(|| {
-        err!("No commands passed. Please use --help for help.");
+        eprintln!("No commands passed. Please use --help for help.");
         exit(1);
     });
 
-    let file_path = {
+    let file_path = 'toml: {
         let mut toml = env::current_exe().unwrap();
         toml.pop();
         toml.push(FILE);
         if toml.exists() {
-            toml
-        } else {
-            let _ = File::create(&toml).unwrap();
-            toml
+            break 'toml toml;
         }
+
+        let _ = File::create(&toml).map_err(|e| {
+            eprintln!(
+                "Error creating file {} due to error: {e}",
+                toml.to_string_lossy()
+            );
+            exit(1);
+        });
+        toml
     };
 
+    let file_str =
+        fs::read_to_string(&file_path).expect("Unexpected failure to read from toml file.");
+    let mut list = if file_str.is_empty() {
+        CommandList::new()
+    } else {
+        toml::from_str::<CommandList>(&file_str).expect("Unable to parse toml.")
+    };
     match commands {
         Subcommands::List => {
-            let file_str = &fs::read_to_string(file_path).unwrap();
-            let list = toml::from_str::<CommandList>(file_str).unwrap();
-            match list.commands {
-                None => {
-                    err!("No Linux commands stored yet!");
-                }
-                Some(cmds) => {
-                    print!("Commands:");
-                    for cmd in cmds {
-                        println!("{}", cmd);
-                    }
-                }
+            if list.is_empty() {
+                err!("No Linux commands stored yet!");
+                return;
             }
+            print!("Commands:");
+            list.iter().for_each(|cmd| println!("{cmd}"));
         }
         Subcommands::Get { cmd } => {
-            let file_str = &fs::read_to_string(file_path).unwrap();
-            let list = toml::from_str::<CommandList>(file_str).unwrap();
-            let mut ind = None;
-            match list.commands {
-                None => {
-                    err!("No Linux commands stored yet!");
-                }
-                Some(cmds) => {
-                    for (i, srch) in cmds.iter().enumerate() {
-                        if srch.cmd.eq(&cmd) {
-                            ind = Some(i);
-                        }
-                    }
-                    if let Some(i) = ind {
-                        println!("{}", cmds[i]);
-                    } else {
-                        err!("{cmd} has either not been stored or was previously removed");
-                    }
-                }
+            if list.is_empty() {
+                err!("No Linux commands stored yet!");
+                return;
             }
+            let Some(found_cmd) = list.find(&cmd) else {
+                err!("{cmd} has either not been stored or was previously removed");
+                return;
+            };
+            println!("{found_cmd}");
         }
         Subcommands::Add(lcmd) => {
-            let file_str = &fs::read_to_string(&file_path).unwrap();
-            let mut list = toml::from_str::<CommandList>(file_str).unwrap();
-            match list.commands {
-                None => {
-                    list.commands = Some(vec![lcmd]);
-                }
-                Some(ref mut vec) => {
-                    if vec.contains(&lcmd) {
-                        err!("This command already exists!");
-                    } else {
-                        success!("{} added.", &lcmd.cmd);
-                        vec.push(lcmd);
-                    }
-                }
+            if list.contains(&lcmd) {
+                err!("This command already exists!");
+                return;
             }
-            let reser = toml::to_string(&list).unwrap();
-            fs::write(&file_path, reser).unwrap();
+            success!("{} added.", &lcmd.cmd);
+            list.push(lcmd);
+            let serialized = toml::to_string(&list).unwrap();
+            fs::write(&file_path, serialized).unwrap();
         }
-        // Subcommands::GetDsc { cmd } => {
-        //     println!("You asked for this {cmd} description!");
-        // }
         Subcommands::Remove { cmd } => {
-            let file_str = &fs::read_to_string(&file_path).unwrap();
-            let mut list = toml::from_str::<CommandList>(file_str).unwrap();
-            match list.commands {
-                None => {
-                    err!("{cmd} has either not been stored or was previously removed");
-                }
-                Some(ref mut cmds) => {
-                    let mut ind = None;
-                    for (i, srch) in cmds.iter_mut().enumerate() {
-                        if srch.cmd.eq(&cmd) {
-                            ind = Some(i);
-                        }
-                    }
-                    if let Some(i) = ind {
-                        cmds.remove(i);
-                        success!("Command {} removed.", &cmd)
-                    } else {
-                        err!("{cmd} has either not been stored or was previously removed");
-                    }
-                }
+            if list.is_empty() || !list.remove(&cmd) {
+                err!("{cmd} has either not been stored or was previously removed");
+                return;
             }
 
-            let sered = toml::to_string(&list).unwrap();
-            fs::write(&file_path, sered).unwrap();
+            success!("Command {} removed.", &cmd);
+            let sered = toml::to_string(&list).expect("Could not serialize command list to toml.");
+            if let Err(e) = fs::write(&file_path, sered) {
+                eprintln!(
+                    "Unable to write new list to {} due to error: {e}",
+                    file_path.to_string_lossy()
+                );
+            }
         }
     }
 }
